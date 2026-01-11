@@ -1,0 +1,275 @@
+\documentclass{article}
+
+% if you need to pass options to natbib, use, e.g.:
+%     \PassOptionsToPackage{numbers, compress}{natbib}
+% before loading neurips_2025
+
+% The authors should use one of these tracks.
+% Before accepting by the NeurIPS conference, select one of the options below.
+% 0. "default" for submission
+\usepackage[preprint]{neurips_2025}
+% the "default" option is equal to the "main" option, which is used for the Main Track with double-blind reviewing.
+% 1. "main" option is used for the Main Track
+%  \usepackage[main]{neurips_2025}
+% 2. "position" option is used for the Position Paper Track
+%  \usepackage[position]{neurips_2025}
+% 3. "dandb" option is used for the Datasets & Benchmarks Track
+ % \usepackage[dandb]{neurips_2025}
+% 4. "creativeai" option is used for the Creative AI Track
+%  \usepackage[creativeai]{neurips_2025}
+% 5. "sglblindworkshop" option is used for the Workshop with single-blind reviewing
+ % \usepackage[sglblindworkshop]{neurips_2025}
+% 6. "dblblindworkshop" option is used for the Workshop with double-blind reviewing
+%  \usepackage[dblblindworkshop]{neurips_2025}
+
+% After being accepted, the authors should add "final" behind the track to compile a camera-ready version.
+% 1. Main Track
+ % \usepackage[main, final]{neurips_2025}
+% 2. Position Paper Track
+%  \usepackage[position, final]{neurips_2025}
+% 3. Datasets & Benchmarks Track
+ % \usepackage[dandb, final]{neurips_2025}
+% 4. Creative AI Track
+%  \usepackage[creativeai, final]{neurips_2025}
+% 5. Workshop with single-blind reviewing
+%  \usepackage[sglblindworkshop, final]{neurips_2025}
+% 6. Workshop with double-blind reviewing
+%  \usepackage[dblblindworkshop, final]{neurips_2025}
+% Note. For the workshop paper template, both \title{} and \workshoptitle{} are required, with the former indicating the paper title shown in the title and the latter indicating the workshop title displayed in the footnote.
+% For workshops (5., 6.), the authors should add the name of the workshop, "\workshoptitle" command is used to set the workshop title.
+% \workshoptitle{WORKSHOP TITLE}
+
+% "preprint" option is used for arXiv or other preprint submissions
+ % \usepackage[preprint]{neurips_2025}
+
+% to avoid loading the natbib package, add option nonatbib:
+%    \usepackage[nonatbib]{neurips_2025}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{xcolor}         % colors
+
+% Note. For the workshop paper template, both \title{} and \workshoptitle{} are required, with the former indicating the paper title shown in the title and the latter indicating the workshop title displayed in the footnote. 
+\title{Fast Inference from Transformers}
+
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to LaTeX to determine where to break the
+% lines. Using \AND forces a line break at that point. So, if LaTeX puts 3 of 4
+% authors names on the first line, and the last on the second line, try using
+% \AND instead of \And before the third author name.
+
+\author{
+  Wang Siyuan \\
+  523030910015 \\
+  \And
+  Lin Ruikang \\
+  523030910013 \\
+  \And
+  Qin Jiachen \\
+  5230309xxxxx \\
+}
+
+\begin{document}
+
+
+\maketitle
+
+
+\begin{abstract}
+  The deployment of Transformer-based Large Language Models is often constrained
+    by high inference latency and memory bandwidth limitations. This paper investigates
+    practical strategies to accelerate LLM inference through memory optimization
+    and algorithmic efficiency. We first present a comprehensive reproduction and evaluation of 
+    several Key-Value cache compression (KVpress) techniques and standard speculative decoding
+    frameworks. Building upon this, we propose two novel methods
+    to the speculative decoding: a \textbf{Dynamic Gamma} mechanism and a \textbf{Multi-level
+    Verification} strategy. Experimental results demonstrate that the former can accelerate while the latter can't.
+    We analyze the results to find a viable way to accelerate LLMs\\
+\end{abstract}
+
+\section{Introduction}
+In response to the high latency and memory bandwidth bottlenecks faced in LLM inference, this paper proposes a joint acceleration scheme that integrates an improved speculative sampling approach (particularly the Dynamic Gamma mechanism) with KV Cache compression techniques.
+
+\section{Speculative Decoding}
+
+\subsection{Standard Speculative Sampling}
+
+The core principle involves generating $\gamma$ draft tokens using $M_q$ and verifying them with $M_p$. For a draft token $x_i$ and its probability distributions $q(x_i)$ and $p(x_i)$, we accept the token if a random variable $r \sim U(0,1)$ satisfies $r < \min(1, p(x_i)/q(x_i))$. To ensure the final distribution matches the target model exactly, rejected tokens are resampled from a rectified distribution:
+\begin{equation}
+    P(x) = \min(p(x), q(x)) + (p(x) - \min(p(x), q(x))) = p(x)
+\end{equation}
+This guarantees that the output distribution is identical to that of the target model. Because the target model can do parallel processing, the generating speed is raised.
+
+\subsection{Dynamic Gamma}
+
+A fixed speculation depth $\gamma$ is suboptimal; aggressive speculation wastes compute when models diverge, while conservative speculation underutilizes bandwidth when models align. We propose a dynamic adjustment strategy:
+\begin{itemize}
+    \item \textbf{Exploitation:} If all speculative tokens are accepted, we increment $\gamma$ ($\gamma \leftarrow \gamma + 1$) to leverage model alignment.
+    \item \textbf{Correction:} If a rejection occurs, we reduce $\gamma$ geometrically ($\gamma \leftarrow \max(4, \lfloor\gamma / 2\rfloor)$) to minimize wasted computation.
+\end{itemize}
+The inspireation comes from CS3611-Computer Network: AIMD (Additive Increase Multiplicative Decrease) is a core congestion control algorithm that gently probes for available bandwidth by linearly increasing the sending rate, and reacts sharply to congestion by multiplicatively decreasing it upon packet loss.\\
+The draft model is considered confident when its proposal is agreed, so we increase gamma to explore more potential speedup. Conversely, a rejection indicates misalignment, prompting a sharp decrease in gamma to avoid wasted computation.
+
+\subsection{Multi-Layer Speculative Decoding}
+
+We extend the paradigm to a cascade of three models: $M_q$ (Draft), $M_r$ (Intermediate), and $M_p$ (Target). The process involves two phases:\\
+1.  $M_q$ generates tokens which are tentatively verified by $M_r$.\\
+2.  The sequence accepted by $M_r$ is passed to $M_p$ for final verification.\\
+The goal is to use the intermediate model $M_r$ as a higher-fidelity filter to reduce the workload on the computationally expensive $M_p$.\\
+The inspiraton is get from ICE2603-Cumputer Organization: The cache can be accelerated by using multi-layer cache.\\
+However, the result turns out to be unsatisfactory, as discussed in Experiments.
+
+\subsection{Experiments}
+
+\subsubsection{Setup}
+
+We utilized the \textbf{Pythia} scaling suite for consistent architecture across sizes: Pythia-70M ($M_q$), Pythia-410M ($M_r$), and Pythia-2.8B ($M_p$). Experiments were conducted using the WikiText-2 and PG-19 datasets. The evaluation metrics include Time Per Output Token (TPOT), Throughput (tokens/s), and Perplexity (PPL).
+
+\subsubsection{Results}
+
+\textbf{Speedup Analysis:} Table \ref{tab:speed} compares the latency of standard autoregressive decoding against our speculative implementations. The standard speculative decoding (70M + 2.8B) achieved a throughput of 6.72 tok/s, representing a \textbf{1.8x speedup} over the baseline 2.8B model (3.72 tok/s). In best-case scenarios, speedups reached 2.5x.
+Table \ref{tab:new} shows results for different draft models, Dynamic Gamma and multi-layer method.
+
+\begin{table}[h]
+  \caption{Inference Speed Comparison (Pythia-70M + Pythia-2.8B + Len=256)}
+  \label{tab:speed}
+  \centering
+  \begin{tabular}{lccc}
+    \toprule
+    Method & TTFT (s) & TPOT (ms) & Throughput (tok/s) \\
+    \midrule
+    Baseline (2.8B)     & 1.55 & 268.51 & 3.72 \\
+    Speculative Average & 0.36 & 148.75 & 6.72 \\
+    Speculative Best    & 0.48 & 107.19 & 9.33 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{table}[h]
+  \caption{Inference Speed Comparison (Len=1048)}
+  \label{tab:new}
+  \centering
+  \begin{tabular}{lccc}
+    \toprule
+    Method & TTFT (s) & TPOT (ms) & Throughput (tok/s) \\
+    \midrule
+    Pythia-2.8B + 70m    & 1.18 & 378.81 & 2.64 \\
+    Pythia-2.8B + 70m with Dynamic Gamma (Best) & 3.23 & 82.41 & 12.13 \\
+    Pythia-2.8B + 70m with Dynamic Gamma (Average) & 1.55 & 363.41 & 2.75 \\
+    Pythia-2.8B + 410m  & 1.63 & 364.32 & 2.74 \\
+    Pythia-2.8B + 410m with Dynamic Gamma (Average) & 4.30 & 352.57 & 2.84 \\ 
+    Multi-Layer (70M+410M+2.8B) & - & 400.52 & 2.50 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\textbf{Dynamic Gamma Efficiency:} Our experiments showed that Dynamic Gamma improved throughput by approximately 5\% compared to a fixed $\gamma=4$ setting in dynamic contexts, confirming that adjusting the speculation horizon based on acceptance rate is beneficial.\\
+We print the sentence generated by Dynamic Gamma method (Best) and discover that it is similar to the sentence in training set, which implies: the more confident draft model is in the sentence, the more speedup is gained through Dynamic Gamma. 
+
+
+\textbf{Multi-Layer Performance:} Contrary to expectations, the Multi-Layer approach (70M+410M+2.8B) resulted in lower throughput (2.50 tok/s) than the two-layer configuration. Analysis suggests that for the model ratios used (1:6:40), the overhead of serializing the intermediate verification outweighs the filtering benefits.\\
+It seems that we need more accurate intermediate model and more appropriate model size ratio to make Multi-Layer method work, which is not available for nowadays model series.
+
+\textbf{Distribution Integrity:} We verified the mathematical correctness of our implementation by comparing Perplexity (PPL) on WikiText-2. The Speculative Decoding method yielded a PPL of \textbf{17.14}, identical to the target model's baseline PPL, confirming loss-less generation. The math demonstration is in individual github report.
+
+\subsection{Conclusion}
+
+This part demonstrated that Speculative Decoding is a viable method for accelerating LLM inference, achieving up to 2.5x speedups. While our \textbf{Dynamic Gamma} mechanism successfully improved efficiency by dynamically tuning the speculation budget, the \textbf{Multi-Layer} extension proved less effective for our specific model size ratios. Future work will focus on optimizing the intermediate verification thresholds and exploring tree-based speculation strategies.
+
+
+\section{KV Cache Compression with KVPress}
+
+Autoregressive decoding stores past \emph{key/value} states for each layer, and
+the KV cache grows linearly with sequence length. We adapt KVPress-style
+compression to GPTNeoX (Pythia) by monkey-patching
+\texttt{transformers.cache\_utils.DynamicCache.update}. This allows us to intercept 
+the KV cache update process and apply compression policies before storage, 
+seamlessly integrating with the HuggingFace ecosystem.
+
+\subsection{Methodology and Exploration}
+
+We evaluated two distinct compression strategies to understand the trade-offs between local context and global importance:
+\begin{itemize}
+    \item \textbf{Streaming:} A baseline strictly preserving the first $N_{sink}$ tokens (attention sinks) and the most recent $N_{recent}$ tokens, discarding all middle context.
+    \item \textbf{Hybrid Conservative:} A representative complex policy that combines sliding windows with importance sampling (based on Key L2-norms), aiming to retain semantically significant tokens from the middle context in addition to sinks and recent tokens.
+\end{itemize}
+
+\subsection{Results and analysis}
+
+Table \ref{tab:kvpress} compares these strategies. We observe a distinct divergence in performance based on sequence length.
+
+\begin{table}[h]
+  \caption{KVPress Strategy Comparison: Streaming (Simple) vs. Conservative (Complex).}
+  \label{tab:kvpress}
+  \centering
+  \small
+  \begin{tabular}{llccc}
+    \toprule
+    Dataset & Policy & Prune & Throughput (tok/s) & PPL \\
+    \midrule
+    WikiText-2 & Streaming & 70\% & 28.28 (+1.46\%) & 508.71 \\
+    WikiText-2 & Conservative & 70\% & 28.23 (+1.28\%) & \textbf{427.09} \\
+    \midrule
+    PG19 & Streaming & 70\% & 25.82 (+97.30\%) & \textbf{108.10} \\
+    PG19 & Conservative & 70\% & 25.97 (+98.38\%) & 135.63 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\textbf{Speed:} Both methods provide similar throughput gains (~1.5\% on short text, ~98\% on long text), confirming that the overhead of the more complex Hybrid selection logic is negligible ("zero-overhead" in implementation).
+
+\textbf{Quality Trade-off:} A key finding is the inversion of efficacy between datasets. 
+\begin{itemize}
+    \item On \textbf{Short Contexts (WikiText-2)}, the Hybrid Conservative approach significantly outperforms Streaming (PPL 427 vs. 508), suggesting that when the total context is small, every token counts, and intelligent selection helps.
+    \item On \textbf{Long Contexts (PG19)}, the simple Streaming policy wins decisively (PPL 108 vs. 136). This indicates that for Pythia models handling long sequences, the "middle" context contains far less predictive value than the most recent tokens. The Hybrid strategy, by trying to save "important" middle tokens, inadvertently sacrifices contiguous recent history, which proves detrimental.
+\end{itemize}
+Thus, for memory-constrained long-context inference, the simplest Streaming strategy is surprisingly the most robust.
+
+\section{Integration}
+We combine Speculative-Decodng with KVpress and get a better speedup, as the former reduces computational latency by drafting tokens in advance, while the latter cuts down memory latency by compressing the key-value cache.
+
+\subsection{Method}
+We test different mixSampling patterns: Simple Speculative Decoding, Speculative Decoding with KVpress, Speculative Decoding with Dynamic Gamma and KVpress.
+\subsection{Results}
+\textbf{Speedup Analysis:} Table \ref{tab:mix} compares the latency of three methods. Since Speculative Decoding maintains the probability distribution, PPL is not tested as it is same with pure KVpress. 
+\begin{table}[h]
+  \caption{Inference Speed Comparison (SpecDec / KVpress / DynaGamma, Len=1000)}
+  \label{tab:mix}
+  \centering
+  \begin{tabular}{lccc}
+    \toprule
+    Method  & TPOT (ms) & Throughput (tok/s) & Speedup vs. SpecDec\\
+    \midrule
+    Speculative Decoding     & 387.54 & 2.58 & 1.00x \\
+    Speculative Decoding + KVpress & 185.97 & 5.38 & 2.08x \\
+    Speculative Decoding + KVpress + Dynamic Gamma   & 59.78 & 16.73 & 6.48x \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+\textbf{Dynamic Advantage:} In the experiment, we witness an accepetion rate of \textbf{68.05\%} and final gamma of \textbf{9}, meaning the method changes gamma according to its performance adaptively. 
+
+\textbf{Better Performance:} With KVpress, the speedup raises significantly. We can see a best speedup to \textbf{6.48x} in Speculative Decoding with KVpress and Dynamic Gamma. However, it is at the cost of the PPL raise caused by KVpress. So there is a trade-off in reality usage.
+
+\section{Code and Work Distribution}
+The code is available at: 
+\begin{itemize}
+  \item Wang Siyuan: \url{https://github.com/MooNknightO2/CS3602_FINAL_SpeDec}
+  \item Lin Ruikang: \url{https://github.com/ephuon/CS3604_FINAL}
+  \item Integration: \url{https://github.com/MooNknightO2/CS3602_FINAL_MIX}
+\end{itemize}
+The work distribution is as follows:
+\begin{itemize}
+  \item Wang Siyuan: Speculative Decoding (100\%), Integration (70\%), Report (60\%)
+  \item Lin Ruikang: KVpress (100\%), Integration (30\%), Report (40\%)
+\end{itemize}
+
+\end{document}
