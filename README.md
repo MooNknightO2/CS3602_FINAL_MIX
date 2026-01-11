@@ -214,6 +214,10 @@ python test.py
 - `speedNew`: Dynamic Gamma 速度测试
 - `speedMulti`: 多层推测解码测试
 
+```bash
+python test_mixSampling.py
+```
+
 ---
 
 ## 📁 项目结构
